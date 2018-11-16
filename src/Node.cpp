@@ -74,17 +74,40 @@ void BLIFCircuit::parseAttributes() {
     NodeAttr_t *attr = new NodeAttr_t;
     attr = (NodeAttr_t *)agbindrec(n, ATTR_STR, sizeof(NodeAttr_t), FALSE);
     // Then we need to set proper values in the binded attribute/record
+    // Set the node name
     setName(n, attr);
+    // Set the node type
     setType(n, attr);
-    getInputs(n, attr);
-    // getOutputs(n, attr);
-    // Traverse out edges and get attribtues
+    // get input and output ports for each node
+    getIOs(n);
+  }
+  // Traverse out edges to set connections
+  for (Agnode_t *n = agfstnode(graph); n; n = agnxtnode(graph, n)) {
     for (Agedge_t *e = agfstout(graph, n); e; e = agnxtout(graph, e)) {
-      std::cout << "visited edge from " << agnameof(agtail(e)) << " to "
-                << agnameof(aghead(e)) << std::endl;
+
+      std::string tailName = agnameof(agtail(e));
+      std::string headName = agnameof(aghead(e));
+      std::string tailPort = agget(e, "from");
+      std::string headPort = agget(e, "to");
+      NodeAttr_t *tailAttr = getAttributes(agtail(e));
+      NodeAttr_t *headAttr = getAttributes(aghead(e));
+      BLIFIO *from = tailAttr->outPort->getBLIFIOByName(tailPort);
+      BLIFIO *to = headAttr->inPort->getBLIFIOByName(headPort);
+      std::string connection =
+          tailName + "_" + tailPort + "_to_" + headName + "_" + headPort;
+
+      if (from && to) {
+        std::cout << "visited edge from " << tailName << "(" << tailPort
+                  << ") to " << headName << "(" << headPort << ")" << std::endl;
+        from->connection = connection;
+        to->connection = connection;
+      } else {
+        std::cerr << "Error: invalid edge connection from " << tailName << "("
+                  << tailPort << ") to " << headName << "(" << headPort << ")"
+                  << std::endl;
+        exit(0);
+      }
     }
-    std::cout << "Traversed out edges\n";
-    // processIO(n, attr);
   }
 }
 void BLIFCircuit::setName(Agnode_t *node, NodeAttr_t *attributes) {
@@ -122,26 +145,35 @@ BLIFCircuit::Type BLIFCircuit::isValidType(std::string typeStr) {
   }
   return _Error;
 }
-void BLIFCircuit::getInputs(Agnode_t *node, NodeAttr_t *attributes) {
+void BLIFCircuit::getIOs(Agnode_t *node) {
   // We need to check whether inputs are specified or not since an entry node
   // does not have any inputs and we should avoid potential run time erros
   Agsym_t *sym = agattrsym(node, "in");
   NodeAttr_t *attrs = getAttributes(node);
-  if (sym && attrs->valid) {
-    // std::string inputExpression = agget(node, "in");
-    std::string inputExpression(std::string("in1 :1 in2 in3: 3 in4 : 10 in5"));
+  if ((sym && attrs->valid) || (sym && attrs->type == Exit)) {
+    std::string inputExpression((char *)agget(node, "in"));
+    // std::string inputExpression(
+    //     std::string(" in1 :s1 in2 in3: 3 in4 : 10 in5"));
     std::cout << "found input expression of \"" << inputExpression
               << "\" for node " << agnameof(node) << std::endl;
-    BLIFPort *port = new BLIFPort(inputExpression);
+    BLIFPort *port = new BLIFPort(inputExpression, node, FALSE, channelWidth);
+    attrs->inPort = port;
+  }
 
-    attrs->port = port;
+  sym = agattrsym(node, "out");
+  if ((sym && attrs->valid) || (sym && attrs->type == Entry)) {
+    std::string outputExpression((char *)agget(node, "out"));
+    std::cout << "found output expression of \"" << outputExpression
+              << "\" for node " << agnameof(node) << std::endl;
+    BLIFPort *port = new BLIFPort(outputExpression, node, TRUE, channelWidth);
+    attrs->outPort = port;
   }
 }
 
-bool BLIFCircuit::isNumber(std::string str, int &num){};
 BLIFCircuit::NodeAttr_t *BLIFCircuit::getAttributes(Agnode_t *n) {
   return (NodeAttr_t *)aggetrec(n, ATTR_STR, 0);
 }
+
 void BLIFCircuit::printCircuit(std::ostream &os, int indent) {
   const std::string header("#### BLIF netlist of DFG circuit\n");
   std::string indent_str = get_indent_string(indent);
@@ -162,29 +194,138 @@ void BLIFCircuit::printCircuit(std::ostream &os, int indent) {
 void BLIFCircuit::printIO(std::ostream &os, int indent) {}
 void BLIFCircuit::printModel(std::ostream &os, Agnode_t *model, int indent) {
   std::string indent_str = get_indent_string(indent);
+  std::string indent_str_inner = get_indent_string(indent + 1);
   NodeAttr_t *attrs = getAttributes(model);
   os << indent_str << "#Node " << attrs->name << std::endl;
-  if (attrs->valid)
+  if (attrs->valid) {
     os << indent_str << ".model " << attrs->typeStr << "\\" << std::endl;
-  else
+    BLIFPort *inPort = attrs->inPort;
+    os << indent_str << "#Inputs\n";
+    for (auto io : *inPort->getIOPointer()) {
+      os << indent_str_inner << io->name << "=" << io->connection << "\\\n";
+    }
+    BLIFPort *outPort = attrs->outPort;
+    os << indent_str << "#Outputs\n";
+    for (auto io : *outPort->getIOPointer()) {
+      os << indent_str_inner << io->name << "=" << io->connection << "\\\n";
+    }
+  } else
     os << indent_str << "#Skipped" << std::endl;
 }
 
-BLIFPort::BLIFPort(std::string expr) { parseExpr(expr); }
+BLIFPort::BLIFPort(std::string expr, Agnode_t *n, bool _mode, int _defWidth) {
+  mode = _mode;
+  defWidth = _defWidth;
+  node = n;
+  io = new std::vector<BLIFIO *>;
+  parseExpr(expr);
+}
 void BLIFPort::parseExpr(std::string expr) {
   /*
     the syntax for inputs and outputs are as follows:
-    expr -> expr | stmt     # examples of expr; in1:3 in2 : 2 in3: 1 in4: 1 in5
-    stmt -> word | word(\\s*):(\\s*)digit   #ex of stmt; in1 :2  or in5
+    expr -> expr | stmnt     # examples of expr; in1:3 in2 : 2 in3: 1 in4: 1 in5
+    stmnt -> word | word(\\s*):(\\s*)digit   #ex of stmt; in1 :2  or in5
     word -> word    #Terminal ex; in1
     digit -> digit  #Terminal  ex; 22
   */
-  std::size_t wspos = expr.find(' '); // first whitepace position
-  std::size_t lkahdpos =
-      expr.find_first_not_of(' ', wspos); // next not white space character
 
-  if(expr[lkahdpos] == ':'){
-    std::cout << "found :\n";
-    std::cout << "Lookahead string is:" << expr.substr(lkahdpos + 1) << std::endl;
+  // remove redundant whitespaces in the begining
+  std::size_t strtpos = expr.find_first_not_of(' ');
+  expr.erase(0, strtpos);
+  // try to find a stmnt
+  std::size_t wspos = expr.find(' '); // first whitepace position
+  // std::cout << "Parsing expression:" << expr << std::endl;
+  // std::cout << "wspos: " << wspos << std::endl;
+  // std::cout << "size: " << expr.size() << std::endl;
+  if (wspos == std::string::npos || wspos == expr.size() - 1) {
+    // Reached the last stmnt
+    // std::cout << "Expression is a statement \n";
+    parseStmnt(expr);
+  } else {
+    std::string stmnt;
+    std::size_t lkhdpos =
+        expr.find_first_not_of(' ', wspos); // next not white space character
+    std::size_t clnpos = expr.find(':');
+    // std::cout << "lkhdpos: " << lkhdpos << std::endl;
+    // std::cout << "clnpos: " << clnpos << std::endl;
+    if (lkhdpos >= clnpos) {
+      // Look for digits
+      std::size_t dgtstrtpos = expr.find_first_of("0123456789", clnpos);
+
+      std::size_t dgtndpos =
+          expr.find_first_not_of("0123456789", dgtstrtpos + 1);
+
+      // std::cout << "dgtstrtpos: " << dgtstrtpos << std::endl;
+      // std::cout << "dgtndpos: " << dgtndpos << std::endl;
+      if (dgtndpos <= dgtstrtpos) {
+        std::cerr << "Error: expected decimal width for node " << agnameof(node)
+                  << std::endl;
+        exit(0);
+      }
+
+      std::size_t nxtpos = expr.find_first_not_of(' ', dgtndpos + 1);
+      stmnt = expr.substr(0, dgtndpos);
+      expr.erase(0, nxtpos - 1);
+      // std::cout << "stmt:" << stmnt << std::endl;
+      // std::cout << "expr:" << expr << std::endl;
+      parseStmnt(stmnt);
+      parseExpr(expr);
+    } else {
+      // Look for a word
+      stmnt = expr.substr(0, lkhdpos - 1);
+      expr.erase(0, lkhdpos - 1);
+      // std::cout << "stmt:" << stmnt << std::endl;
+      // std::cout << "expr:" << expr << std::endl;
+      parseStmnt(stmnt);
+      parseExpr(expr);
+    }
   }
+}
+
+void BLIFPort::parseStmnt(std::string stmnt) {
+
+  // remove all the whitepaces
+  stmnt.erase(remove(stmnt.begin(), stmnt.end(), ' '), stmnt.end());
+  if (stmnt.empty())
+    return;
+  // std::cout << "Parsing statement: " << stmnt << std::endl;
+  std::size_t clnpos = stmnt.find(':');
+  std::string portName;
+  BLIFIO *newIO = new BLIFIO;
+  if (clnpos == std::string::npos) {
+    // This is the case when width is unspecified
+    newIO->name = stmnt;
+    newIO->width = defWidth;
+
+  } else {
+
+    newIO->name = stmnt.substr(0, clnpos);
+    if (isValidNumber(stmnt.substr(clnpos + 1))) {
+      std::istringstream conv(stmnt.substr(clnpos + 1));
+      int w;
+      conv >> w;
+      newIO->width = w;
+    } else {
+      std::cerr << "Error: \"" << stmnt.substr(clnpos + 1)
+                << "\" is not a number\n";
+      exit(0);
+    }
+  }
+  io->push_back(newIO);
+  // std::cout << "port name is " << newIO->name << std::endl;
+}
+bool BLIFPort::isValidNumber(std::string s) {
+  // std::cout << "checking validity of " << s << std::endl;
+  std::string::const_iterator it = s.begin();
+  while (it != s.end() && std::isdigit(*it))
+    ++it;
+  return !s.empty() && it == s.end();
+}
+
+BLIFIO *BLIFPort::getBLIFIOByName(std::string name) {
+  for (auto &ioObj : *io) {
+    if (ioObj->name == name)
+      return ioObj;
+  }
+  return NULL;
 }
