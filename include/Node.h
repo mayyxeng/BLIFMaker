@@ -11,6 +11,8 @@
 
 Agraph_t *parseDotFile(std::string filePath, int verbosity);
 std::string get_indent_string(int indent);
+class BLIFPort;
+
 
 class BLIFCircuit {
 
@@ -39,8 +41,10 @@ public:
     Type type;
     std::string typeStr;
     bool valid;
+    BLIFPort *port;
 
   } NodeAttr_t;
+
 
   BLIFCircuit(Agraph_t *g, std::string name) : graph(g), name(name){};
 
@@ -48,7 +52,7 @@ public:
   std::string name;
   int channelWidth;
   Agraph_t *graph;
-  
+
   // bool fileOpen;
   void parseAttributes();
   void printCircuit(std::ostream &os, int indent = 0);
@@ -56,8 +60,9 @@ public:
   void printIO(std::ostream &os, int indent = 0);
   void setName(Agnode_t *node, NodeAttr_t *attribtues);
   void setType(Agnode_t *node, NodeAttr_t *attribtues);
-  void setInputs(Agnode_t *node, NodeAttr_t *attribtues);
-  void setOutputs(Agnode_t *node, NodeAttr_t *attribtues);
+  void getInputs(Agnode_t *node, NodeAttr_t *attribtues);
+  void getOutputs(Agnode_t *node, NodeAttr_t *attribtues);
+  bool isNumber(std::string str, int &num);
   //TODO: make this safe by using const
   NodeAttr_t *getAttributes(Agnode_t *node);
   Type isValidType(std::string typeStr);
@@ -88,10 +93,18 @@ private:
   std::string name;
 };
 
-struct BLIFIO {
+struct BLIFIO{
   bool mode;
   int width;
   std::string name;
 
+};
+class BLIFPort {
+public:
+  BLIFPort(std::string expr);
+private:
+  void parseExpr(std::string expr);
+  std::string name;
+  std::vector<BLIFIO> *io;
 };
 #endif //__BLIFMAKER_GRAPH_H__

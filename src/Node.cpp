@@ -70,10 +70,14 @@ void BLIFCircuit::parseAttributes() {
   }
   // Traverse nodes to get attributes
   for (Agnode_t *n = agfstnode(graph); n; n = agnxtnode(graph, n)) {
+    // First we need to bind our desired attributes
     NodeAttr_t *attr = new NodeAttr_t;
     attr = (NodeAttr_t *)agbindrec(n, ATTR_STR, sizeof(NodeAttr_t), FALSE);
+    // Then we need to set proper values in the binded attribute/record
     setName(n, attr);
     setType(n, attr);
+    getInputs(n, attr);
+    // getOutputs(n, attr);
     // Traverse out edges and get attribtues
     for (Agedge_t *e = agfstout(graph, n); e; e = agnxtout(graph, e)) {
       std::cout << "visited edge from " << agnameof(agtail(e)) << " to "
@@ -118,6 +122,23 @@ BLIFCircuit::Type BLIFCircuit::isValidType(std::string typeStr) {
   }
   return _Error;
 }
+void BLIFCircuit::getInputs(Agnode_t *node, NodeAttr_t *attributes) {
+  // We need to check whether inputs are specified or not since an entry node
+  // does not have any inputs and we should avoid potential run time erros
+  Agsym_t *sym = agattrsym(node, "in");
+  NodeAttr_t *attrs = getAttributes(node);
+  if (sym && attrs->valid) {
+    // std::string inputExpression = agget(node, "in");
+    std::string inputExpression(std::string("in1 :1 in2 in3: 3 in4 : 10 in5"));
+    std::cout << "found input expression of \"" << inputExpression
+              << "\" for node " << agnameof(node) << std::endl;
+    BLIFPort *port = new BLIFPort(inputExpression);
+
+    attrs->port = port;
+  }
+}
+
+bool BLIFCircuit::isNumber(std::string str, int &num){};
 BLIFCircuit::NodeAttr_t *BLIFCircuit::getAttributes(Agnode_t *n) {
   return (NodeAttr_t *)aggetrec(n, ATTR_STR, 0);
 }
@@ -147,4 +168,23 @@ void BLIFCircuit::printModel(std::ostream &os, Agnode_t *model, int indent) {
     os << indent_str << ".model " << attrs->typeStr << "\\" << std::endl;
   else
     os << indent_str << "#Skipped" << std::endl;
+}
+
+BLIFPort::BLIFPort(std::string expr) { parseExpr(expr); }
+void BLIFPort::parseExpr(std::string expr) {
+  /*
+    the syntax for inputs and outputs are as follows:
+    expr -> expr | stmt     # examples of expr; in1:3 in2 : 2 in3: 1 in4: 1 in5
+    stmt -> word | word(\\s*):(\\s*)digit   #ex of stmt; in1 :2  or in5
+    word -> word    #Terminal ex; in1
+    digit -> digit  #Terminal  ex; 22
+  */
+  std::size_t wspos = expr.find(' '); // first whitepace position
+  std::size_t lkahdpos =
+      expr.find_first_not_of(' ', wspos); // next not white space character
+
+  if(expr[lkahdpos] == ':'){
+    std::cout << "found :\n";
+    std::cout << "Lookahead string is:" << expr.substr(lkahdpos + 1) << std::endl;
+  }
 }
