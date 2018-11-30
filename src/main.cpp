@@ -9,6 +9,7 @@ int main(int argc, char **argv){
   std::ofstream os;
   os.open("../my_circuit.blif", std::ios::out);
   circ.parseAttributes();
+  std::cout << "attributes parsed successfully\n";
   circ.printCircuit(os);
   // std::vector<int> *v = new std::vector<int>;
   // v->push_back(1);

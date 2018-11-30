@@ -18,3 +18,8 @@ add_executable(BLIFMaker ${SOURCES})
 target_compile_options(BLIFMaker PUBLIC -O0 -std=c++11 -pedantic -Wall -fPIC)
 # Link against LLVM libraries
 target_link_libraries(BLIFMaker ${llvm_libs})
+
+#get_target_property(BLIFMAKER_DIR BLIFMaker LOCATION)
+add_custom_command(TARGET BLIFMaker
+                   POST_BUILD
+                 COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:BLIFMaker> "${CMAKE_CURRENT_BINARY_DIR}")

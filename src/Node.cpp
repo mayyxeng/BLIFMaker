@@ -1,3 +1,12 @@
+/** @file Node.cpp
+ *  @brief Function and class method definitions for Node.h
+ *
+ *  This file contains function definitions for Node.h. The class BLIFCircuit
+ * takes a graph representing the circuit and parses external attributes such as
+ * i/o, type, etc..
+ * @author Mahyar Emami (mayyxeng)
+ * @bug setName and setType methods have redundant arguments
+ */
 #include "../include/Node.h"
 #include <chrono>
 #include <ctime>
@@ -75,9 +84,11 @@ void BLIFCircuit::parseAttributes() {
     attr = (NodeAttr_t *)agbindrec(n, ATTR_STR, sizeof(NodeAttr_t), FALSE);
     // Then we need to set proper values in the binded attribute/record
     // Set the node name
-    setName(n, attr);
+    setName(n);
     // Set the node type
-    setType(n, attr);
+    setType(n);
+    // Set the op of Operator types;
+    setOp(n);
     // get input and output ports for each node
     getIOs(n);
   }
@@ -95,10 +106,17 @@ void BLIFCircuit::parseAttributes() {
       BLIFIO *to = headAttr->inPort->getBLIFIOByName(headPort);
       std::string connection =
           tailName + "_" + tailPort + "_to_" + headName + "_" + headPort;
-
+      std::cout << "visiting edge from " << tailName << "(" << tailPort
+                << ") to " << headName << "(" << headPort << ")" << std::endl;
+      if (!from) {
+        std::cout << "\tInvalid tail " << tailPort << " of " << tailName
+                  << "\n";
+      }
+      if (!to) {
+        std::cout << "\tInvalid head " << headPort << " of " << headName
+                  << "\n";
+      }
       if (from && to) {
-        std::cout << "visited edge from " << tailName << "(" << tailPort
-                  << ") to " << headName << "(" << headPort << ")" << std::endl;
         from->connection = connection;
         to->connection = connection;
       } else {
@@ -110,11 +128,13 @@ void BLIFCircuit::parseAttributes() {
     }
   }
 }
-void BLIFCircuit::setName(Agnode_t *node, NodeAttr_t *attributes) {
+void BLIFCircuit::setName(Agnode_t *node) {
+  NodeAttr_t *attributes = getAttributes(node);
   attributes->name = std::string(agnameof(node));
 }
-void BLIFCircuit::setType(Agnode_t *node, NodeAttr_t *attributes) {
+void BLIFCircuit::setType(Agnode_t *node) {
   std::string typeStr(agget(node, "type"));
+  NodeAttr_t *attributes = getAttributes(node);
   // Remove whitespaces
   typeStr.erase(remove(typeStr.begin(), typeStr.end(), ' '), typeStr.end());
   Type t_ = isValidType(typeStr);
@@ -133,6 +153,23 @@ void BLIFCircuit::setType(Agnode_t *node, NodeAttr_t *attributes) {
       attributes->valid = TRUE;
   }
 }
+void BLIFCircuit::setOp(Agnode_t *node) {
+  NodeAttr_t *attrs = getAttributes(node);
+  if (attrs->type == Operator) {
+    std::string opStr(agget(node, "op"));
+    opStr.erase(remove(opStr.begin(), opStr.end(), ' '), opStr.end());
+    Op op_ = isValidOp(opStr);
+    if (op_ == _NullOp) {
+      std::cerr << "Operator op can not be NULL\n";
+      exit(1);
+    } else if (op_ == _ErrorOp) {
+      std::cerr << "Error: unkown op \"" << opStr << "\"\n";
+      exit(1);
+    } else {
+      attrs->op = op_;
+    }
+  }
+}
 BLIFCircuit::Type BLIFCircuit::isValidType(std::string typeStr) {
   if (typeStr.empty())
     return _Null;
@@ -145,11 +182,23 @@ BLIFCircuit::Type BLIFCircuit::isValidType(std::string typeStr) {
   }
   return _Error;
 }
+BLIFCircuit::Op BLIFCircuit::isValidOp(std::string opStr) {
+  if (opStr.empty())
+    return _NullOp;
+  for (int i = 0; i < 10; i++) {
+    if (opStr == Op_str[i]) {
+      return (Op)i;
+    }
+  }
+  return _ErrorOp;
+}
 void BLIFCircuit::getIOs(Agnode_t *node) {
   // We need to check whether inputs are specified or not since an entry node
   // does not have any inputs and we should avoid potential run time erros
   Agsym_t *sym = agattrsym(node, "in");
   NodeAttr_t *attrs = getAttributes(node);
+  attrs->inPort = nullptr;
+  attrs->outPort = nullptr;
   if ((sym && attrs->valid) || (sym && attrs->type == Exit)) {
     std::string inputExpression((char *)agget(node, "in"));
     // std::string inputExpression(
@@ -168,6 +217,36 @@ void BLIFCircuit::getIOs(Agnode_t *node) {
     BLIFPort *port = new BLIFPort(outputExpression, node, TRUE, channelWidth);
     attrs->outPort = port;
   }
+  /*
+    A trail always terminates on stores, but this shouldn't happen with the BLIF
+    because a STORE node could be regarded as general IO.
+    What I am doing here could result in bugs, because attributeParse method may
+    miss out on the new nodes!
+  */
+  if (attrs->op == store) {
+    BLIFPort *port = new BLIFPort("out1", node, TRUE, channelWidth);
+    attrs->outPort = port;
+    std::cout << "Info: " << agnameof(node)
+              << " is of op = store\n\tinferring outport\n";
+    std::string storeOutName = agnameof(node);
+    storeOutName = storeOutName + std::string("_lsq");
+    // Create a node representing an exit point
+    Agnode_t *storeOut = agnode(graph, (char *)storeOutName.c_str(), 1);
+    // Append the necessary attributes
+    NodeAttr_t *attrStoreOut = new NodeAttr_t;
+    attrStoreOut =
+        (NodeAttr_t *)agbindrec(storeOut, ATTR_STR, sizeof(NodeAttr_t), FALSE);
+    agset(storeOut, "in", "in1");
+    agset(storeOut, "type", "Exit");
+    setName(storeOut);
+    setType(storeOut);
+    setOp(storeOut);
+    // Create the edge between store and exit point
+    Agedge_t *storeOutEdge = agedge(
+        graph, node, storeOut, (char *)(storeOutName + "_edge").c_str(), 1);
+    agset(storeOutEdge, "from", "out1");
+    agset(storeOutEdge, "to", "in1");
+  }
 }
 
 BLIFCircuit::NodeAttr_t *BLIFCircuit::getAttributes(Agnode_t *n) {
@@ -175,6 +254,7 @@ BLIFCircuit::NodeAttr_t *BLIFCircuit::getAttributes(Agnode_t *n) {
 }
 
 void BLIFCircuit::printCircuit(std::ostream &os, int indent) {
+
   const std::string header("#### BLIF netlist of DFG circuit\n");
   std::string indent_str = get_indent_string(indent);
 
@@ -183,32 +263,67 @@ void BLIFCircuit::printCircuit(std::ostream &os, int indent) {
   os << indent_str << "#### File Created: " << std::ctime(&t);
 
   os << indent_str << header;
-  os << indent_str << ".model " << name << std::endl;
+  os << indent_str << ".model " << name << "\n";
 
+  printCircuitIO(os, indent + 1);
   for (Agnode_t *n = agfstnode(graph); n; n = agnxtnode(graph, n)) {
-
-    printModel(os, n, indent + 1);
-    // processIO(n, attr);
+    printSubckt(os, n, indent + 2);
   }
+  os << indent_str << ".end\n";
 }
-void BLIFCircuit::printIO(std::ostream &os, int indent) {}
-void BLIFCircuit::printModel(std::ostream &os, Agnode_t *model, int indent) {
+void BLIFCircuit::printCircuitIO(std::ostream &os, int indent) {
+  std::cout << "Printing node as entry node(input)\n";
+  std::string indent_str = get_indent_string(indent);
+  NodeAttr_t *attrs;
+  os << ".inputs\\\n";
+  for (Agnode_t *n = agfstnode(graph); n; n = agnxtnode(graph, n)) {
+    attrs = getAttributes(n);
+    if (attrs->type == Entry) {
+      std::cout << "Found \"Entry\" (input) node " << agnameof(n);
+      std::cout << " of width " << attrs->width << std::endl;
+      auto ios = attrs->outPort->getIOPointer();
+      for (auto iter = ios->begin(); iter != ios->end(); iter++) {
+        os << indent_str << (*iter)->connection << " ";
+      }
+    }
+  }
+
+  os << "\n";
+  os << ".outputs\\\n";
+  for (Agnode_t *n = agfstnode(graph); n; n = agnxtnode(graph, n)) {
+    attrs = getAttributes(n);
+    if (attrs->type == Exit) {
+      std::cout << "Found \"Exit\" (input) node " << agnameof(n);
+      std::cout << " of width " << attrs->width << std::endl;
+      auto ios = attrs->inPort->getIOPointer();
+      for (auto iter = ios->begin(); iter != ios->end(); iter++) {
+        os << indent_str << (*iter)->connection << " ";
+      }
+    }
+  }
+  os << "\n";
+}
+
+void BLIFCircuit::printSubckt(std::ostream &os, Agnode_t *model, int indent) {
   std::string indent_str = get_indent_string(indent);
   std::string indent_str_inner = get_indent_string(indent + 1);
   NodeAttr_t *attrs = getAttributes(model);
   os << indent_str << "#Node " << attrs->name << std::endl;
   if (attrs->valid) {
-    os << indent_str << ".model " << attrs->typeStr << "\\" << std::endl;
+    os << indent_str << ".subckt " << attrs->typeStr << "\\" << std::endl;
     BLIFPort *inPort = attrs->inPort;
-    os << indent_str << "#Inputs\n";
-    for (auto io : *inPort->getIOPointer()) {
-      os << indent_str_inner << io->name << "=" << io->connection << "\\\n";
+
+    if (attrs->type != Constant) {
+      for (auto io : *inPort->getIOPointer()) {
+        os << indent_str_inner << io->name << "=" << io->connection << " ";
+      }
     }
+
     BLIFPort *outPort = attrs->outPort;
-    os << indent_str << "#Outputs\n";
     for (auto io : *outPort->getIOPointer()) {
-      os << indent_str_inner << io->name << "=" << io->connection << "\\\n";
+      os << indent_str_inner << io->name << "=" << io->connection << " ";
     }
+    os << std::endl;
   } else
     os << indent_str << "#Skipped" << std::endl;
 }
@@ -234,12 +349,9 @@ void BLIFPort::parseExpr(std::string expr) {
   expr.erase(0, strtpos);
   // try to find a stmnt
   std::size_t wspos = expr.find(' '); // first whitepace position
-  // std::cout << "Parsing expression:" << expr << std::endl;
-  // std::cout << "wspos: " << wspos << std::endl;
-  // std::cout << "size: " << expr.size() << std::endl;
+
   if (wspos == std::string::npos || wspos == expr.size() - 1) {
     // Reached the last stmnt
-    // std::cout << "Expression is a statement \n";
     parseStmnt(expr);
   } else {
     std::string stmnt;
