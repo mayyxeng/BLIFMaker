@@ -96,36 +96,74 @@ void BLIFCircuit::parseAttributes() {
   for (Agnode_t *n = agfstnode(graph); n; n = agnxtnode(graph, n)) {
     for (Agedge_t *e = agfstout(graph, n); e; e = agnxtout(graph, e)) {
 
-      std::string tailName = agnameof(agtail(e));
-      std::string headName = agnameof(aghead(e));
-      std::string tailPort = agget(e, "from");
-      std::string headPort = agget(e, "to");
-      NodeAttr_t *tailAttr = getAttributes(agtail(e));
-      NodeAttr_t *headAttr = getAttributes(aghead(e));
-      BLIFIO *from = tailAttr->outPort->getBLIFIOByName(tailPort);
-      BLIFIO *to = headAttr->inPort->getBLIFIOByName(headPort);
-      std::string connection =
-          tailName + "_" + tailPort + "_to_" + headName + "_" + headPort;
-      std::cout << "visiting edge from " << tailName << "(" << tailPort
-                << ") to " << headName << "(" << headPort << ")" << std::endl;
-      if (!from) {
-        std::cout << "\tInvalid tail " << tailPort << " of " << tailName
-                  << "\n";
-      }
-      if (!to) {
-        std::cout << "\tInvalid head " << headPort << " of " << headName
-                  << "\n";
-      }
-      if (from && to) {
-        from->connection = connection;
-        to->connection = connection;
-      } else {
-        std::cerr << "Error: invalid edge connection from " << tailName << "("
-                  << tailPort << ") to " << headName << "(" << headPort << ")"
-                  << std::endl;
-        exit(0);
-      }
+      //   std::string tailName = agnameof(agtail(e));
+      //   std::string headName = agnameof(aghead(e));
+      //   std::string tailPort = agget(e, "from");
+      //   std::string headPort = agget(e, "to");
+      //   NodeAttr_t *tailAttr = getAttributes(agtail(e));
+      //   NodeAttr_t *headAttr = getAttributes(aghead(e));
+      //   BLIFIO *from = tailAttr->outPort->getBLIFIOByName(tailPort);
+      //   BLIFIO *to = headAttr->inPort->getBLIFIOByName(headPort);
+      //   std::string connection = tailName + "." + tailPort + "*" +
+      //                            tailAttr->typeStr + "*" + "~" + headName +
+      //                            "." + headPort + "*" + headAttr->typeStr +
+      //                            "*";
+      //   std::string connection = genConnection(agtail(e), aghead(e));
+      //   std::cout << "visiting edge from " << tailName << "(" << tailPort
+      //             << ") to " << headName << "(" << headPort << ")" <<
+      //             std::endl;
+      //   if (!from) {
+      //     std::cout << "\tInvalid tail " << tailPort << " of " << tailName
+      //               << "\n";
+      //   }
+      //   if (!to) {
+      //     std::cout << "\tInvalid head " << headPort << " of " << headName
+      //               << "\n";
+      //   }
+      //   if (from && to) {
+      //     from->connection = connection;
+      //     to->connection = connection;
+      //   } else {
+      //     std::cerr << "Error: invalid edge connection from " << tailName <<
+      //     "("
+      //               << tailPort << ") to " << headName << "(" << headPort <<
+      //               ")"
+      //               << std::endl;
+      //     exit(0);
+      //   }
+      genConnection(e);
     }
+  }
+}
+
+void BLIFCircuit::genConnection(Agedge_t *e) {
+  std::string tailName = agnameof(agtail(e));
+  std::string headName = agnameof(aghead(e));
+  std::string tailPort = agget(e, "from");
+  std::string headPort = agget(e, "to");
+  NodeAttr_t *tailAttr = getAttributes(agtail(e));
+  NodeAttr_t *headAttr = getAttributes(aghead(e));
+  BLIFIO *from = tailAttr->outPort->getBLIFIOByName(tailPort);
+  BLIFIO *to = headAttr->inPort->getBLIFIOByName(headPort);
+  std::string connection = tailName + "." + tailPort + "*" + tailAttr->typeStr +
+                           "*" + "~" + headName + "." + headPort + "*" +
+                           headAttr->typeStr + "*";
+  std::cout << "visiting edge from " << tailName << "(" << tailPort << ") to "
+            << headName << "(" << headPort << ")" << std::endl;
+  if (!from) {
+    std::cout << "\tInvalid tail " << tailPort << " of " << tailName << "\n";
+  }
+  if (!to) {
+    std::cout << "\tInvalid head " << headPort << " of " << headName << "\n";
+  }
+  if (from && to) {
+    from->connection = connection;
+    to->connection = connection;
+  } else {
+    std::cerr << "Error: invalid edge connection from " << tailName << "("
+              << tailPort << ") to " << headName << "(" << headPort << ")"
+              << std::endl;
+    exit(0);
   }
 }
 void BLIFCircuit::setName(Agnode_t *node) {
@@ -313,15 +351,15 @@ void BLIFCircuit::printSubckt(std::ostream &os, Agnode_t *model, int indent) {
     os << indent_str << ".subckt " << attrs->typeStr << "\\" << std::endl;
     BLIFPort *inPort = attrs->inPort;
 
-    if (attrs->type != Constant) {
-      for (auto io : *inPort->getIOPointer()) {
+    for (auto io : *inPort->getIOPointer()) {
+      if (!io->connection.empty())
         os << indent_str_inner << io->name << "=" << io->connection << " ";
-      }
     }
 
     BLIFPort *outPort = attrs->outPort;
     for (auto io : *outPort->getIOPointer()) {
-      os << indent_str_inner << io->name << "=" << io->connection << " ";
+      if (!io->connection.empty())
+        os << indent_str_inner << io->name << "=" << io->connection << " ";
     }
     os << std::endl;
   } else
@@ -398,9 +436,12 @@ void BLIFPort::parseStmnt(std::string stmnt) {
 
   // remove all the whitepaces
   stmnt.erase(remove(stmnt.begin(), stmnt.end(), ' '), stmnt.end());
+  stmnt.erase(remove(stmnt.begin(), stmnt.end(), '+'), stmnt.end());
+  stmnt.erase(remove(stmnt.begin(), stmnt.end(), '-'), stmnt.end());
+  stmnt.erase(remove(stmnt.begin(), stmnt.end(), '?'), stmnt.end());
   if (stmnt.empty())
     return;
-  // std::cout << "Parsing statement: " << stmnt << std::endl;
+  std::cout << "Parsing statement: " << stmnt << std::endl;
   std::size_t clnpos = stmnt.find(':');
   std::string portName;
   BLIFIO *newIO = new BLIFIO;
@@ -440,4 +481,123 @@ BLIFIO *BLIFPort::getBLIFIOByName(std::string name) {
       return ioObj;
   }
   return NULL;
+}
+
+void BLIFCircuit::makeFork2Single(Agnode_t *node, int level, int target_fanout,
+                                  int index, std::string base_name,
+                                  Agnode_t *original_fork,
+                                  std::vector<Agnode_t *> &successors) {
+
+  std::cout << "Target fanout is " << target_fanout << std::endl;
+  if (target_fanout >= 2) {
+    std::cout << "Creating fork2 node " << std::endl;
+    std::string new_name =
+        base_name + "_l" + std::to_string(level) + "_c" + std::to_string(index);
+
+    // create a node to replace the old fork node with big fanout
+
+    Agnode_t *new_node = agnode(graph, (char *)new_name.c_str(), true);
+    // Append attribtues to the new node
+    NodeAttr_t *new_attr = new NodeAttr_t;
+    new_attr =
+        (NodeAttr_t *)agbindrec(new_node, ATTR_STR, sizeof(NodeAttr_t), FALSE);
+    std::cout << "\tsetting in1 input" << std::endl;
+    agset(new_node, "in", "in1");
+    std::cout << "\tsetting out1 out2 outputs" << std::endl;
+    agset(new_node, "out", "out1 out2");
+    std::cout << "\tsetting type to Fork" << std::endl;
+    agset(new_node, "type", "Fork");
+    std::cout << "\tsetting name to " << new_name << std::endl;
+    setName(new_node);
+    std::cout << "\tsetting enum type to Fork" << std::endl;
+    setType(new_node);
+
+    new_attr->outPort =
+        new BLIFPort(std::string("out1 out2"), new_node, TRUE, channelWidth);
+    new_attr->inPort =
+        new BLIFPort(std::string("in1"), new_node, FALSE, channelWidth);
+
+    std::cout << "New node generation succeeded" << std::endl;
+    // Creating an edge between the new node and node.
+    // NOTE: here it is assumed that the original dot file does not have fork
+    // trees in other words, a fork can not have a fork predecessor in the
+    // orignal graph
+    auto new_edge = agedge(graph, node, new_node,
+                           (char *)(new_name + "_edge").c_str(), TRUE);
+    agset(new_edge, "to", "in1");
+    if (level == 0) {
+      std::cout << "Connecting predecessor to new fork root" << std::endl;
+      auto edge = agedge(graph, node, original_fork, NULL, FALSE);
+      std::string origin_port = agget(edge, "from");
+      agset(new_edge, "from", (char *)origin_port.c_str());
+
+    } else {
+      std::cout << "Creating new edges in the fork tree" << std::endl;
+      std::string from_port = "out" + std::to_string(index + 1);
+      agset(new_edge, "from", (char *)from_port.c_str());
+    }
+    std::cout << "edge " << agnameof(new_edge) << " created" << std::endl;
+    std::cout << "\t with tail " << agnameof(agtail(new_edge)) << std::endl;
+    std::cout << "\t and head " << agnameof(aghead(new_edge)) << std::endl;
+    genConnection(new_edge);
+
+    // Recurse
+    makeFork2Single(new_node, level + 1, target_fanout / 2, 0, base_name,
+                    original_fork, successors);
+    makeFork2Single(new_node, level + 1, target_fanout - target_fanout / 2, 1,
+                    base_name, original_fork, successors);
+
+  } else {
+    std::cout << "Reached leaf of the fork tree" << std::endl;
+    if (successors.size()) {
+      auto successor = successors.back();
+      std::string edge_name = agnameof(node) + std::string("_edge");
+      auto edge = agedge(graph, original_fork, successor, NULL, FALSE);
+      //std::string successor_port = agget(edge, "to");
+      auto new_edge = agedge(graph, node, successors.back(),
+                         (char *)edge_name.c_str(), TRUE);
+      std::string port_name = "out" + std::to_string(index + 1);
+      agset(new_edge, "from", (char*)port_name.c_str());
+      agset(new_edge, "to", agget(edge, "to"));
+      genConnection(new_edge);
+      successors.pop_back();
+      std::cout << successors.size() << " successors are left" << std::endl;
+
+    } else {
+      std::cout << "Something is wrong." << std::endl;
+    }
+  }
+
+  // An edge is connected from node to new_node
+  // setOp(root);
+  // for (Agedge_t *e = agfstout(graph, node); e; e = agnxtout(graph, e)) {
+  //   auto head = aghead(e);
+  //   std::cout << "diconnecting " << agnameof(node) << " from " <<
+  //   agnameof(head)
+  //             << std::endl;
+  // }
+}
+
+void BLIFCircuit::makeFork2() {
+
+  for (Agnode_t *n = agfstnode(graph); n; n = agnxtnode(graph, n)) {
+    auto attr = getAttributes(n);
+    if (attr->type == Fork && attr->valid && attr->outPort->ioCount() > 2) {
+      std::cout << "Found fork node " << agnameof(n) << " of size "
+                << attr->outPort->ioCount() << " > 2" << std::endl;
+      // delete an edge by calling agdeledge(graph, e)
+      // delete a node by calling agdelnode(graph, n)
+      std::cout << "Node " << agnameof(agtail(agfstin(graph, n)))
+                << " is the predecessor" << std::endl;
+      auto predecessor = agtail(agfstin(graph, n));
+
+      std::vector<Agnode_t *> successors;
+      for (Agedge_t *e = agfstout(graph, n); e; e = agnxtout(graph, e))
+        successors.push_back(aghead(e));
+      makeFork2Single(predecessor, 0, attr->outPort->ioCount(), 0,
+                      std::string(agnameof(n)), n, successors);
+      attr->valid = FALSE;
+      std::cout << "Fork transformation generation succeeded" << std::endl;
+    }
+  }
 }
